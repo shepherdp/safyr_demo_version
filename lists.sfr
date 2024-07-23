@@ -1,0 +1,18 @@
+a = [1 2 3]
+print(a)
+
+a = a - 2
+print(a)
+
+a = a + 4 + 5 + 6
+print(a)
+
+a += [7 8]
+print(a)
+
+for i = 0 .. 6:
+  print(a @ i)
+end
+
+a = a </3
+print(a)
