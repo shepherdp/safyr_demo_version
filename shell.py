@@ -49,6 +49,7 @@ class Shell:
                 print('run moduletest')
                 print('run lists')
                 print('run structs')
+                print('run whentrigger')
 
             needsrun = False
             data = ''
