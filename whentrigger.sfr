@@ -1,0 +1,15 @@
+a = 0
+b = 0
+
+when a == 50:
+  b = 12
+end
+
+while 1:
+  a += 1
+  ? b == 12: break     ; leave the loop as soon as b is 12
+end
+
+print('Exited loop')
+print(a)
+print(b)
