@@ -1,0 +1,25 @@
+; this is a comment
+
+a = 1
+print(a)
+
+a = "abc"
+print(a)
+
+a -= 'b'
+print(a)
+
+int b = 7   ; this variable is static
+b = 6       ; if you try to change b to a non-number, you'll throw an error
+
+.add [x y] <~ x + y      ; this is a one-line function
+
+c = add(12 24)
+print(c)
+
+.sub [t u] <~            ; this is a multiline function
+  return t - u           ; gonna use {} syntax, but I haven't changed that yet
+end
+
+q = sub(50 25)
+print(q)
