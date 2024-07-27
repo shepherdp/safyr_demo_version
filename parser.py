@@ -73,6 +73,71 @@ class VarAccessNode:
         return f'{self.var_name_tok}'
 
 
+class ReferenceAccessNode:
+    def __init__(self, head):
+        self.head = head
+
+        self.pos_start = self.head.specifier.pos_start
+        self.pos_end = self.head.specifier.pos_end
+
+    def __repr__(self):
+        return f'{self.head}'
+
+class PropertyAccessNode:
+    def __init__(self, root_var_tok, specifier):
+        self.root_var = root_var_tok
+        self.specifier = specifier
+
+        self.pos_start = self.root_var.pos_start
+        self.pos_end = self.root_var.pos_end
+
+    def __repr__(self):
+        return f'{self.root_var} ~> {self.specifier}'
+
+
+class PropertyProbeNode:
+    def __init__(self, node, value):
+        self.root_var = node.root_var
+        self.child_var = node.child_var
+        self.value = value
+
+        self.pos_start = self.root_var.pos_start
+        self.pos_end = self.root_var.pos_end
+
+    def __repr__(self):
+        return f'{self.root_var} ~> {self.child_var}'
+
+
+class PropertyAssignNode:
+    def __init__(self, propaccess_node):
+        self.propaccess_node = propaccess_node
+        self.value = None
+
+    def __repr__(self):
+        return f'{self.root_var} ~> {self.child_var}'
+
+
+class ContainerAccessNode:
+    def __init__(self, root_var_tok, specifier_tok):
+        self.root_var = root_var_tok
+        self.specifier = specifier_tok
+
+        self.pos_start = self.root_var.pos_start
+        self.pos_end = self.root_var.pos_end
+
+    def __repr__(self):
+        return f'{self.root_var} ~> {self.specifier}'
+
+
+class ReferenceAssignNode:
+    def __init__(self, target_node, value_node):
+        self.target_node = target_node
+        self.value_node = value_node
+
+        # self.pos_start = self.target_node.pos_start
+        # self.pos_end = self.target_node.pos_end
+
+
 class VarAssignNode:
     def __init__(self, var_name_tok, op_tok, value_node,
                  const=False, statictype=None):
@@ -309,19 +374,6 @@ class Parser:
 
         more_statements = True
 
-        # THIS IS AN ISSUE
-        # Right now, if I try to put an expression on a line directly below a statement,
-        # it doesn't get counted at all.
-        # Just going to add another line to the test case for right now
-
-        # EDIT
-        # I added the 'if isinstance(...)' part below to fix this.
-        # The idea is that if I get a one-liner like that, I need to assume
-        # keep looking for more code.  This is kind of a band-aid, and the process
-        # of checking for more statements needs to be refactored to be more
-        # robust.  For now, this just says 'If I saw an import statement last,
-        # assume there could be more lines.'
-
         while True:
             newline_count = 0
             while self.current_tok.type == 'BREAK':
@@ -430,7 +482,8 @@ class Parser:
             res.register_advancement()
             self.advance()
 
-        if self.current_tok.type == 'SYM' and self.peek().type == 'ASG':
+        # regular variable assignment
+        if self.current_tok.type == 'SYM' and self.peek().type in ('ASG',):
 
             var_name = self.current_tok
             res.register_advancement()
@@ -447,6 +500,51 @@ class Parser:
 
             return res.success(VarAssignNode(var_name, op_tok, expr,
                                              const=constvar, statictype=statictype))
+
+        # assign a value to a property or container element
+
+        if self.peek().type in ('DOT', 'AT'):
+
+            origin = res.register(self.atom())
+            done = False
+            node = None
+
+            while not done:
+                done = True
+                if self.current_tok.type == 'DOT':
+                    done = False
+                    res.register_advancement()
+                    self.advance()
+
+                    target = res.register(self.atom())
+                    origin = PropertyAccessNode(origin, target)
+
+                elif self.current_tok.type == 'AT':
+                    done = False
+                    res.register_advancement()
+                    self.advance()
+
+                    target = res.register(self.arith_expr())
+                    origin = ContainerAccessNode(origin, target)
+
+
+            ref = ReferenceAccessNode(origin)
+
+            if self.current_tok.type == 'ASG':
+                res.register_advancement()
+                self.advance()
+
+                value = res.register(self.expr())
+                if res.error: return res
+
+                return res.success(ReferenceAssignNode(ref, value))
+
+            else:
+                return res.success(ref)
+
+        # if self.current_tok.type == 'LBR':
+        #     elem = self.list_expr()
+        #     pass
 
         node = res.register(self.bin_op(self.comp_expr, (('AND', '&'), ('OR', '|'),
                                                          ('NAND', '~&'), ('NOR', '~|'),
@@ -475,6 +573,12 @@ class Parser:
             if res.error: return res
             return res.success(UnaryOpNode(op_tok, node))
 
+        # elif self.current_tok.matches(Token('AT', '@')):
+        #     node = res.register(self.bin_op(self.term, ('AT',), func_b=self.expr()))
+        #     if res.error: return res
+        #     return res.success(node)
+
+        # node = res.register(self.bin_op(self.arith_expr, ('EQ', 'NE', 'LT', 'GT', 'LE', 'GE')))
         node = res.register(self.bin_op(self.arith_expr, ('EQ', 'NE', 'LT', 'GT', 'LE', 'GE')))
 
         if res.error:
@@ -505,7 +609,7 @@ class Parser:
         return self.power()
 
     def power(self):
-        return self.bin_op(self.call, ('POW', 'AT', 'LSLC', 'RSLC', 'DOT'), self.factor)
+        return self.bin_op(self.call, ('POW', 'LSLC', 'RSLC'), self.factor)
 
     def call(self):
         res = ParseResult()
