@@ -383,7 +383,8 @@ class List(Value):
         elif other.value >= len(self.elements):
             return None, InvalidSyntaxError(self.pos_start, self.pos_end,
                                      "Index out of range")
-        elem = self.elements[other.value].copy()
+        elem = self.elements[other.value]
+        # elem = self.elements[other.value].copy()
         return elem, None
 
     def sliceleft(self, other):
@@ -447,10 +448,15 @@ class Map(Value):
     def __repr__(self):
         return str(self.elements)
     
-    
+
+# I want to get rid of this, but it gets the job done for now.
+# All copying should be handled in house.
+from copy import deepcopy
+
 class Struct(Value):
-    def __init__(self, properties, context):
+    def __init__(self, properties, context, instance_name):
         super().__init__('')
+        self.instance_name = instance_name
         self.properties = properties
         self.context = context
 
@@ -458,10 +464,11 @@ class Struct(Value):
         return f'{self.properties}'
 
     def copy(self):
-        copy = Struct(self.properties, self.context)
+        copy = Struct(deepcopy(self.properties), self.context, '')
         copy.static = self.static
         copy.const = self.const
         copy.triggers = self.triggers
+        copy.instance_name = self.instance_name
         copy.set_pos(self.pos_start, self.pos_end)
-        copy.set_context(self.context)
+        # copy.set_context(self.context)
         return copy
