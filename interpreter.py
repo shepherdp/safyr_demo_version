@@ -1,5 +1,7 @@
 from lexer import KWDS, Lexer
-from parser import Parser, VarAssignNode
+from parser import (Parser, VarAssignNode, ContainerAccessNode,
+                    PropertyAccessNode, ListNode, StringNode,
+                    VarAccessNode, NumberNode, BinOpNode, Token)
 from typedef import *
 from errors import *
 
@@ -96,8 +98,11 @@ class BaseFunction(Value):
         for i in range(len(args)):
             arg_name = arg_names[i]
             arg_value = args[i]
-            arg_value.set_context(exec_ctx)
-            exec_ctx.symbol_table.set(arg_name, arg_value)
+            if not isinstance(arg_value, Struct):
+                arg_value.set_context(exec_ctx)
+                exec_ctx.symbol_table.set(arg_name, arg_value)
+            else:
+                exec_ctx.symbol_table.set(arg_name, arg_value)
 
     def check_and_populate_args(self, arg_names, args, exec_ctx):
         res = RTResult()
@@ -167,11 +172,11 @@ class StructGenerator(BaseFunction):
 
 
         # this is the part that is causing the problem right now
-        # i am returning self, which is basically a struct factory, not a struct object
+        # I am returning self, which is basically a struct factory, not a struct object
         # functions return pretyped values, so I need to make a new class for struct objects,
         # and probably rename things accordingly.
 
-        value = Struct(properties, exec_ctx)
+        value = Struct(properties, exec_ctx, '')
         retval = (value if self.auto_return else None) or res.func_return_value or Number.null
         return res.success(retval)
 
@@ -449,7 +454,10 @@ class Interpreter:
 
     def visit_BinOpNode(self, node, context):
         res = RTResult()
-        left = res.register(self.visit(node.left_node, context))
+        if not isinstance(node.left_node, List):
+            left = res.register(self.visit(node.left_node, context))
+        else:
+            left = node.left_node
         if res.should_return(): return res
         if isinstance(left, Struct):
             try: right = res.register(self.visit(node.right_node, left.context))
@@ -511,10 +519,6 @@ class Interpreter:
         res = RTResult()
         var_name = node.var_name_tok.value
 
-        # when I was writing this myself, this line was acting funky.  It would put the builtin function
-        # into 'Special Variables' and then wouldn't recognize that it had a copy method when that got called a
-        # few lines down.  I don't know what I did, but this is a note-to-self just in case something similar happens
-        # in the future.
         value = context.symbol_table.get(var_name)
 
         if not value:
@@ -528,6 +532,153 @@ class Interpreter:
         else:
             value = value.copy().set_pos(node.pos_start, node.pos_end).set_context(context)
         return res.success(value)
+
+    def visit_ContainerAccessNode(self, node, context):
+        res = RTResult()
+        # root = res.register(self.visit(node.root_var, context))
+        # if res.error: return res
+
+        curr_node = node
+        if isinstance(curr_node.root_var, ContainerAccessNode):
+            result = res.register(self.visit(curr_node.root_var, context))
+            if res.error: return res
+            val = BinOpNode(result, Token('AT', '@'), curr_node.specifier)
+            result = res.register(self.visit(val, context))
+            if res.error: return res
+            return res.success(result)
+
+        elif isinstance(curr_node.root_var, PropertyAccessNode):
+            result = res.register(self.visit(curr_node.root_var, context))
+            if res.error: return res
+            val = BinOpNode(result, Token('AT', '@'), curr_node.specifier)
+            result = res.register(self.visit(val, context))
+            if res.error: return res
+            return res.success(result)
+
+        elif isinstance(curr_node.root_var, VarAccessNode) or isinstance(curr_node.root_var, StringNode):
+            binopnode = BinOpNode(curr_node.root_var, Token('AT', '@'),
+                                  curr_node.specifier)
+            result = res.register(self.visit(binopnode, context))
+            if res.error: return res
+            return res.success(result)
+
+
+
+        # r = node.root_var
+        # j = res.register(self.visit(node.specifier, context))
+        #
+        # if isinstance(j, Number) and j.type == 'INT':
+        #     myroot = res.register(self.visit(r, context))
+        #     myelem = myroot.elements[j.value]
+        #     return res.success(myelem)
+        # pass
+
+    def visit_PropertyAccessNode(self, node, context):
+        res = RTResult()
+        val = res.register(self.visit(node.root_var, context))
+        if res.error: return res
+
+        if isinstance(node.specifier, PropertyAccessNode):
+            result = res.register(self.visit(node.specifier, val.context))
+            if res.error: return res
+            return res.success(result)
+        elif isinstance(node.specifier, VarAccessNode):
+            ctx = val.context
+
+            # if node.child_var.var_name_tok.value not in ctx.symbol_table.symbols:
+            #     ctx = ctx.symbol_table.get(val.instance_name)
+
+            # ctx = context.symbol_table.get(node.child_var.var_name_tok.value).context
+            result = res.register(self.visit(node.specifier, ctx))
+            if res.error: return res
+            return res.success(result)
+
+    def visit_ReferenceAssignNode(self, node, context):
+        res = RTResult()
+        value = res.register(self.visit(node.value_node, context))
+        if res.error: return res
+
+        node.target_node.value = value
+
+        # Okay.  Not gonna lie.  This is the kludgey-est thing in this language, but I think
+        # it'll work.
+
+        varpath = 'context.symbol_table.symbols'
+
+        curr_node = node.target_node.head
+        children = ''
+        while True:
+            accesstype = ''
+            childstring = ''
+            if isinstance(curr_node, PropertyAccessNode):
+                childstring = '.properties'
+                accesstype = 'prop'
+            if isinstance(curr_node, ContainerAccessNode):
+                childstring = '.elements'
+                accesstype = 'elem'
+
+            if isinstance(curr_node, VarAccessNode):
+                # val = res.register(self.visit(curr_node, context))
+                children = f'["{curr_node.var_name_tok.value}"]' + children
+                break
+
+
+            if isinstance(curr_node, PropertyAccessNode) and isinstance(curr_node.specifier, VarAccessNode):
+                # var = res.register(self.visit(curr_node, context))
+                if accesstype == 'prop':
+                    childstring += f'["{curr_node.specifier.var_name_tok.value}"]'
+                curr_node = curr_node.root_var
+            elif isinstance(curr_node, ContainerAccessNode) and isinstance(curr_node.specifier, VarAccessNode):
+                # var = res.register(self.visit(curr_node, context))
+                # specifier = res.register(self.visit(curr_node.specifier, context))
+                if accesstype == 'prop':
+                    childstring += f'["{curr_node.specifier.var_name_tok.value}"]'
+                curr_node = curr_node.root_var
+            elif isinstance(curr_node, ContainerAccessNode) and isinstance(curr_node.specifier, NumberNode):
+                # var = res.register(self.visit(curr_node, context))
+                specifier = self.visit(curr_node.specifier, context)
+                if accesstype == 'elem':
+                    childstring += f'[{specifier.value}]'
+                curr_node = curr_node.root_var
+
+            children = childstring + children
+
+        varpath += f'{children}'
+        setpath = varpath + f'.value = {value}'
+        exec(setpath)
+        return res.success(None)
+
+
+    def visit_ReferenceAccessNode(self, node, context):
+        res = RTResult()
+        val = None
+
+
+        curr_node = node.head
+
+        if isinstance(curr_node, PropertyAccessNode):
+            source = res.register(self.visit(curr_node, context))
+            return res.success(source)
+
+        if isinstance(curr_node, ContainerAccessNode):
+            source = res.register(self.visit(curr_node, context))
+            return res.success(source)
+
+        if isinstance(curr_node.root_var, VarAccessNode):
+            val = res.register(self.visit(BinOpNode(curr_node.root_var, Token('AT', '@'), curr_node.specifier),
+                                          context))
+            if res.error: return res
+            return res.success(val)
+
+        elif isinstance(curr_node.root_var, ContainerAccessNode):
+            source = res.register(self.visit(curr_node.root_var, context))
+            if res.error: return res
+
+            val = res.register(self.visit(BinOpNode(source, Token('AT', '@'), curr_node.specifier),
+                                          context))
+            if res.error: return res
+            return res.success(val)
+
 
     def visit_VarAssignNode(self, node, context):
         res = RTResult()
@@ -580,6 +731,13 @@ class Interpreter:
 
             # can only use bare assignment to create new value
             if op_tok == '=':
+                if isinstance(value, Struct):
+                    value.instance_name = var_name
+
+                    ##
+                    value = value.copy()
+                    ##
+
                 context.symbol_table.set(var_name, value)
             else:
                 raise Exception(f'Symbol {var_name} doesn\'t exist')
@@ -631,6 +789,11 @@ class Interpreter:
 
         if op_tok == '=':
 
+            ##
+            if isinstance(value, Struct):
+                value = value.copy()
+            ##
+
             context.symbol_table.set(var_name, value)
 
             for t in value.triggers:
@@ -646,7 +809,7 @@ class Interpreter:
         elif op_tok == '/=': value = og_val.div(value)[0]
         elif op_tok == '%=': value = og_val.mod(value)[0]
         elif op_tok == '^=': value = og_val.pow(value)[0]
-        else: raise Exception('Expected assignment operator')
+        else: raise Exception(f'Expected assignment operator, got {op_tok}')
 
         context.symbol_table.set(var_name, value)
 
@@ -764,7 +927,11 @@ class Interpreter:
     def visit_UseNode(self, node, context):
         res = RTResult()
         name = node.fname.value
-        from os import path
+
+        if name == 'static':
+            context.symbol_table.set('static-typing', Number(1))
+            return res.success(None)
+
         f = open(f'C:\\Users\\pvshe\\PycharmProjects\\safyr\\{name}.sfr', 'r')
         code = f.read()
         f.close()
